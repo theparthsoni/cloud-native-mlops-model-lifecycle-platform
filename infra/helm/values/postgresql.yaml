@@ -1,0 +1,28 @@
+auth:
+  username: postgres
+  database: mlops
+  password: postgres
+  existingSecret: ""
+  secretKeys:
+    adminPasswordKey: postgres-password
+
+primary:
+  persistence:
+    enabled: true
+    size: 8Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1
+      memory: 2Gi
+
+extraDeploy:
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: mlops-postgresql-uri
+    type: Opaque
+    stringData:
+      uri: postgresql+psycopg2://postgres:postgres@mlops-postgresql.mlops-platform.svc.cluster.local:5432/mlops

@@ -1,0 +1,42 @@
+images:
+  airflow:
+    repository: mlops-airflow
+    tag: latest
+    pullPolicy: IfNotPresent
+
+executor: KubernetesExecutor
+
+config:
+  core:
+    load_examples: 'False'
+  webserver:
+    expose_config: 'True'
+
+webserver:
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    password: admin
+    email: admin@example.com
+
+scheduler:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+webserver:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+workers:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+
+postgresql:
+  enabled: true
