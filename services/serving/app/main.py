@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import logging
-import os
 import time
 import uuid
 from typing import Any, Dict, Optional
@@ -10,21 +8,28 @@ import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel
-from pythonjsonlogger import jsonlogger
 from starlette.responses import Response
+
+from services.common.config import settings
+from services.common.errors import PredictionError
+from services.common.logging import setup_logging
 
 from .factory import create_backend, create_prediction_sink
 
-logger = logging.getLogger("model-serving")
-handler = logging.StreamHandler()
-handler.setFormatter(jsonlogger.JsonFormatter())
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+logger = setup_logging("serving")
 
-REQUESTS = Counter("inference_requests_total", "Total inference requests", ["model", "status"])
-LATENCY = Histogram("inference_latency_seconds", "Inference latency seconds", ["model"])
+REQUESTS = Counter(
+    "inference_requests_total",
+    "Total inference requests",
+    ["model", "status"],
+)
+LATENCY = Histogram(
+    "inference_latency_seconds",
+    "Inference latency seconds",
+    ["model"],
+)
 
-API_KEYS = {k.strip() for k in os.getenv("API_KEYS", "dev-key").split(",") if k.strip()}
+API_KEYS = {key.strip() for key in settings.API_KEYS_RAW.split(",") if key.strip()}
 
 
 def require_api_key(x_api_key: str = Header(default="")):
@@ -47,7 +52,6 @@ class PredictResponse(BaseModel):
 app = FastAPI(title="Model Serving API", version="1.1")
 
 DEPLOYED_MODEL_NAME, backend = create_backend()
-
 sink = create_prediction_sink()
 
 
@@ -70,6 +74,7 @@ def model_info(dep=Depends(require_api_key)):
 def predict(req: PredictRequest, dep=Depends(require_api_key)):
     request_id = str(uuid.uuid4())
     model_name = req.model_name or DEPLOYED_MODEL_NAME
+
     if model_name != DEPLOYED_MODEL_NAME:
         raise HTTPException(
             status_code=400,
@@ -79,28 +84,38 @@ def predict(req: PredictRequest, dep=Depends(require_api_key)):
             ),
         )
 
-    t0 = time.time()
+    started_at = time.time()
     status = "success"
-    pred: Any = None
+    prediction: Any = None
 
     try:
+        logger.info("Received prediction request request_id=%s model=%s", request_id, model_name)
+
         df = pd.DataFrame([req.features])
-        pred = backend.predict_one(df)
+        prediction = backend.predict_one(df)
+
         REQUESTS.labels(model=model_name, status="success").inc()
+
         return PredictResponse(
-            prediction=pred,
+            prediction=prediction,
             model_uri=backend.model_uri,
             model_version=backend.model_version,
             request_id=request_id,
         )
-    except Exception as e:
+
+    except Exception as exc:
         status = "error"
         REQUESTS.labels(model=model_name, status="error").inc()
-        logger.exception({"event": "inference_error", "request_id": request_id, "error": str(e)})
-        raise HTTPException(status_code=500, detail=f"Inference error: {type(e).__name__}: {e}")
+        logger.exception("Inference failed for request_id=%s", request_id)
+        raise HTTPException(
+            status_code=500,
+            detail=str(PredictionError(f"Inference failed: {exc}")),
+        ) from exc
+
     finally:
-        latency_ms = (time.time() - t0) * 1000.0
-        LATENCY.labels(model=model_name).observe((time.time() - t0))
+        latency_seconds = time.time() - started_at
+        latency_ms = latency_seconds * 1000.0
+        LATENCY.labels(model=model_name).observe(latency_seconds)
 
         try:
             sink.write(
@@ -108,19 +123,18 @@ def predict(req: PredictRequest, dep=Depends(require_api_key)):
                 model_name=model_name,
                 model_version=str(backend.model_version),
                 features=req.features,
-                prediction=pred,
+                prediction=prediction,
                 latency_ms=latency_ms,
                 status=status,
             )
         except Exception:
-            logger.exception({"event": "prediction_log_failed", "request_id": request_id})
+            logger.exception("Prediction telemetry logging failed for request_id=%s", request_id)
 
 
 @app.post("/reload")
 def reload_model(dep=Depends(require_api_key)):
-
     if hasattr(backend, "force_reload"):
-        backend.force_reload()  
+        backend.force_reload()
     return {"status": "will_reload"}
 
 

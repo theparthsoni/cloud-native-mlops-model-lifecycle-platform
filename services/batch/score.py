@@ -1,73 +1,45 @@
-import os
 import json
-from urllib.parse import urlparse
 
-import pandas as pd
 import mlflow
-import boto3
 
+from services.common.config import settings
+from services.common.errors import PredictionError
+from services.common.logging import setup_logging
+from services.common.storage import read_csv_s3, write_csv_s3
 
-def parse_s3_uri(uri: str):
-    u = urlparse(uri)
-    if u.scheme != "s3":
-        raise ValueError(f"Expected s3:// URI, got: {uri}")
-    bucket = u.netloc
-    key = u.path.lstrip("/")
-    return bucket, key
-
-
-def s3_client():
-    endpoint = os.getenv("MLFLOW_S3_ENDPOINT_URL")
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    )
-
-
-def read_csv_s3(uri: str) -> pd.DataFrame:
-    bucket, key = parse_s3_uri(uri)
-    s3 = s3_client()
-    obj = s3.get_object(Bucket=bucket, Key=key)
-    return pd.read_csv(obj["Body"])
-
-
-def write_csv_s3(df: pd.DataFrame, uri: str) -> None:
-    bucket, key = parse_s3_uri(uri)
-    s3 = s3_client()
-    csv_bytes = df.to_csv(index=False).encode("utf-8")
-    s3.put_object(Bucket=bucket, Key=key, Body=csv_bytes, ContentType="text/csv")
+logger = setup_logging("batch")
 
 
 def main() -> None:
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
-    if not tracking_uri:
-        raise RuntimeError("MLFLOW_TRACKING_URI is required")
+    logger.info("Starting batch scoring for model '%s'", settings.MODEL_NAME)
 
-    model_name = os.getenv("MODEL_NAME", "demo_classifier")
-    model_stage = os.getenv("MODEL_STAGE", "Production")
-    input_path = os.getenv("BATCH_INPUT", "s3://data/batch_input.csv")
-    output_path = os.getenv("BATCH_OUTPUT", "s3://data/batch_output_predictions.csv")
+    try:
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        model_uri = f"models:/{settings.MODEL_NAME}/{settings.MODEL_STAGE}"
+        model = mlflow.pyfunc.load_model(model_uri)
 
-    mlflow.set_tracking_uri(tracking_uri)
-    model_uri = f"models:/{model_name}/{model_stage}"
+        df = read_csv_s3(settings.BATCH_INPUT)
+        predictions = model.predict(df)
 
-    model = mlflow.pyfunc.load_model(model_uri)
+        output_df = df.copy()
+        output_df["prediction"] = predictions
+        write_csv_s3(output_df, settings.BATCH_OUTPUT)
 
-    df = read_csv_s3(input_path)
-    preds = model.predict(df)
+        logger.info(
+            "Batch scoring completed: %s",
+            json.dumps(
+                {
+                    "model_uri": model_uri,
+                    "input": settings.BATCH_INPUT,
+                    "output": settings.BATCH_OUTPUT,
+                    "rows": int(df.shape[0]),
+                }
+            ),
+        )
 
-    out = df.copy()
-    out["prediction"] = preds
-    write_csv_s3(out, output_path)
-
-    print(json.dumps({
-        "model_uri": model_uri,
-        "input": input_path,
-        "output": output_path,
-        "rows": int(df.shape[0]),
-    }))
+    except Exception as exc:
+        logger.exception("Batch scoring failed")
+        raise PredictionError(f"Batch scoring failed: {exc}") from exc
 
 
 if __name__ == "__main__":

@@ -8,6 +8,11 @@ import mlflow
 import pandas as pd
 from mlflow.tracking import MlflowClient
 
+from services.common.errors import ModelLoadError
+from services.common.logging import setup_logging
+
+logger = setup_logging("serving-backend")
+
 
 @dataclass(frozen=True)
 class MLflowModelRef:
@@ -19,8 +24,8 @@ class MLflowModelRef:
 class MLflowPyFuncBackend:
     """MLflow pyfunc backend.
 
-    Loads a model either by explicit version or by stage (e.g., Production/Staging).
-    Supports hot-reload when the stage's latest version changes.
+    Loads a model either by explicit version or by stage.
+    Supports hot reload when the stage's latest version changes.
     """
 
     def __init__(self, ref: MLflowModelRef, tracking_uri: str):
@@ -46,7 +51,9 @@ class MLflowPyFuncBackend:
         stage = self._ref.stage or "Production"
         versions = self._client.get_latest_versions(self._ref.model_name, stages=[stage])
         if not versions:
-            raise RuntimeError(f"No versions found for {self._ref.model_name} in stage {stage}")
+            raise ModelLoadError(
+                f"No versions found for model '{self._ref.model_name}' in stage '{stage}'"
+            )
         return str(versions[0].version)
 
     def load(self) -> None:
@@ -55,8 +62,20 @@ class MLflowPyFuncBackend:
         with self._lock:
             if self._model is not None and target_version == self._loaded_version:
                 return
+
             uri = self._resolve_uri()
-            self._model = mlflow.pyfunc.load_model(uri)
+            logger.info(
+                "Loading model '%s' from uri='%s' target_version='%s'",
+                self._ref.model_name,
+                uri,
+                target_version,
+            )
+
+            try:
+                self._model = mlflow.pyfunc.load_model(uri)
+            except Exception as exc:
+                raise ModelLoadError(f"Failed to load model from uri '{uri}': {exc}") from exc
+
             self._model_uri = uri
             self._loaded_version = target_version
 
@@ -64,7 +83,7 @@ class MLflowPyFuncBackend:
         self.load()
         with self._lock:
             if self._model is None:
-                raise RuntimeError("Model not loaded")
+                raise ModelLoadError("Model is not loaded")
             return self._model.predict(df)[0]
 
     @property
@@ -78,3 +97,4 @@ class MLflowPyFuncBackend:
     def force_reload(self) -> None:
         with self._lock:
             self._model = None
+            logger.info("Forced model reload requested for '%s'", self._ref.model_name)

@@ -1,14 +1,19 @@
-import os
 import json
 import math
-from typing import Dict, Any, List
+import os
+from typing import Any, Dict, List
 
-import pandas as pd
-import psycopg2
-from mlflow.tracking import MlflowClient
 import mlflow
-
+import pandas as pd
+from mlflow.tracking import MlflowClient
 from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
+
+from services.common.config import settings
+from services.common.db import get_predlog_connection
+from services.common.errors import DriftDetectionError
+from services.common.logging import setup_logging
+
+logger = setup_logging("drift")
 
 
 def psi(expected: List[float], actual: List[float], eps: float = 1e-6) -> float:
@@ -16,38 +21,32 @@ def psi(expected: List[float], actual: List[float], eps: float = 1e-6) -> float:
     if len(expected) != len(actual):
         raise ValueError("expected/actual length mismatch")
 
-    s = 0.0
-    for e, a in zip(expected, actual):
-        e = max(float(e), eps)
-        a = max(float(a), eps)
-        s += (a - e) * math.log(a / e)
-    return float(s)
+    total = 0.0
+    for expected_value, actual_value in zip(expected, actual):
+        expected_value = max(float(expected_value), eps)
+        actual_value = max(float(actual_value), eps)
+        total += (actual_value - expected_value) * math.log(actual_value / expected_value)
+    return float(total)
 
 
 def load_reference_stats(client: MlflowClient, model_name: str) -> Dict[str, Any]:
     versions = client.get_latest_versions(model_name, stages=["Production"])
     if not versions:
-        raise RuntimeError(f"No Production model found for {model_name}")
+        raise DriftDetectionError(f"No Production model found for {model_name}")
 
-    mv = versions[0]
-    run_id = mv.run_id
+    model_version = versions[0]
+    run_id = model_version.run_id
 
-    # Download drift/reference_stats.json artifact
     local_dir = client.download_artifacts(run_id, "drift")
     ref_file = os.path.join(local_dir, "reference_stats.json")
-    with open(ref_file, "r", encoding="utf-8") as f:
-        return json.load(f)
+    with open(ref_file, "r", encoding="utf-8") as file:
+        return json.load(file)
 
 
 def fetch_recent_features(hours: int) -> pd.DataFrame:
-    host = os.environ["PREDLOG_HOST"]
-    db = os.environ.get("PREDLOG_DB", "mlops")
-    user = os.environ.get("PREDLOG_USER", "postgres")
-    password = os.environ["PREDLOG_PASSWORD"]
-
-    conn = psycopg2.connect(host=host, dbname=db, user=user, password=password)
+    connection = get_predlog_connection()
     try:
-        q = f"""
+        query = f"""
         SELECT features
         FROM prediction_logs
         WHERE ts >= NOW() - INTERVAL '{int(hours)} hours'
@@ -55,94 +54,124 @@ def fetch_recent_features(hours: int) -> pd.DataFrame:
         ORDER BY ts DESC
         LIMIT 5000;
         """
-        df = pd.read_sql(q, conn)
+        df = pd.read_sql(query, connection)
         if df.empty:
             return pd.DataFrame()
-        feats = pd.json_normalize(df["features"].apply(lambda x: x))
-        return feats
+        return pd.json_normalize(df["features"].apply(lambda value: value))
     finally:
-        conn.close()
+        connection.close()
 
 
-def compute_drift(ref: Dict[str, Any], recent: pd.DataFrame) -> Dict[str, float]:
-    out: Dict[str, float] = {}
-    features = ref.get("features", {})
+def compute_drift(reference: Dict[str, Any], recent: pd.DataFrame) -> Dict[str, float]:
+    output: Dict[str, float] = {}
+    features = reference.get("features", {})
 
-    for col, st in features.items():
-        if col not in recent.columns:
+    for column, stats in features.items():
+        if column not in recent.columns:
             continue
-        edges = st.get("bin_edges")
-        expected = st.get("proportions")
+
+        edges = stats.get("bin_edges")
+        expected = stats.get("proportions")
         if not edges or not expected:
             continue
 
-        series = pd.to_numeric(recent[col], errors="coerce").dropna()
+        series = pd.to_numeric(recent[column], errors="coerce").dropna()
         if series.empty:
             continue
 
         bins = pd.cut(series, bins=edges, include_lowest=True)
-        actual = (bins.value_counts(normalize=True).sort_index()).tolist()
+        actual = bins.value_counts(normalize=True).sort_index().tolist()
 
-        # Align lengths (pd.cut can drop empty bins if edges are weird)
         if len(actual) != len(expected):
-            m = min(len(actual), len(expected))
-            actual = actual[:m]
-            expected = expected[:m]
+            continue
 
-        out[col] = psi(expected, actual)
+        output[column] = psi(expected, actual)
 
-    return out
+    return output
 
 
-def publish_metrics(model_name: str, drift_scores: Dict[str, float]) -> None:
-    pushgateway = os.getenv("PUSHGATEWAY_URL")
-    if not pushgateway:
+def push_metrics(model_name: str, drift_scores: Dict[str, float]) -> None:
+    if not settings.DRIFT_PUSHGATEWAY_URL:
+        logger.info("No pushgateway configured; skipping metric push")
         return
 
     registry = CollectorRegistry()
-    g = Gauge("feature_drift_psi", "Feature drift PSI", ["model", "feature"], registry=registry)
+    gauge = Gauge(
+        "model_feature_psi",
+        "Population Stability Index by feature",
+        ["model_name", "feature"],
+        registry=registry,
+    )
 
-    for feat, score in drift_scores.items():
-        g.labels(model=model_name, feature=feat).set(score)
+    max_score = 0.0
+    for feature, score in drift_scores.items():
+        gauge.labels(model_name=model_name, feature=feature).set(score)
+        max_score = max(max_score, score)
 
-    push_to_gateway(pushgateway, job="drift-check", registry=registry)
+    max_gauge = Gauge(
+        "model_max_feature_psi",
+        "Maximum feature PSI across all monitored features",
+        ["model_name"],
+        registry=registry,
+    )
+    max_gauge.labels(model_name=model_name).set(max_score)
+
+    push_to_gateway(
+        settings.DRIFT_PUSHGATEWAY_URL,
+        job="model_drift",
+        registry=registry,
+    )
 
 
 def main() -> None:
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
-    if not tracking_uri:
-        raise RuntimeError("MLFLOW_TRACKING_URI is required")
+    logger.info("Starting drift detection for model '%s'", settings.MODEL_NAME)
 
-    model_name = os.getenv("MODEL_NAME", "demo_classifier")
-    hours = int(os.getenv("DRIFT_LOOKBACK_HOURS", "24"))
-    threshold = float(os.getenv("DRIFT_PSI_THRESHOLD", "0.2"))
+    try:
+        mlflow.set_tracking_uri(settings.MLFLOW_TRACKING_URI)
+        client = MlflowClient(tracking_uri=settings.MLFLOW_TRACKING_URI)
 
-    mlflow.set_tracking_uri(tracking_uri)
-    client = MlflowClient(tracking_uri=tracking_uri)
+        reference = load_reference_stats(client, settings.MODEL_NAME)
+        recent = fetch_recent_features(settings.DRIFT_LOOKBACK_HOURS)
 
-    ref = load_reference_stats(client, model_name)
-    recent = fetch_recent_features(hours)
+        if recent.empty:
+            logger.info("No recent production features found; exiting without drift result")
+            return
 
-    if recent.empty:
-        print(json.dumps({"status": "no_recent_data"}))
-        return
+        drift_scores = compute_drift(reference, recent)
+        if not drift_scores:
+            logger.info("No comparable features found for drift calculation")
+            return
 
-    scores = compute_drift(ref, recent)
-    publish_metrics(model_name, scores)
+        push_metrics(settings.MODEL_NAME, drift_scores)
 
-    worst = max(scores.values()) if scores else 0.0
-    status = "ok" if worst < threshold else "drift_detected"
+        max_psi = max(drift_scores.values())
+        drift_detected = max_psi >= settings.DRIFT_PSI_THRESHOLD
 
-    print(json.dumps({
-        "status": status,
-        "worst_psi": worst,
-        "threshold": threshold,
-        "scores": scores,
-        "rows": int(recent.shape[0]),
-    }))
+        logger.info(
+            "Drift detection completed: %s",
+            json.dumps(
+                {
+                    "model_name": settings.MODEL_NAME,
+                    "lookback_hours": settings.DRIFT_LOOKBACK_HOURS,
+                    "max_psi": max_psi,
+                    "threshold": settings.DRIFT_PSI_THRESHOLD,
+                    "drift_detected": drift_detected,
+                    "feature_count": len(drift_scores),
+                }
+            ),
+        )
 
-    if status != "ok":
-        raise SystemExit(10)
+        if drift_detected:
+            raise DriftDetectionError(
+                f"Drift detected for model '{settings.MODEL_NAME}' with max PSI={max_psi:.4f}"
+            )
+
+    except DriftDetectionError:
+        logger.exception("Drift threshold breached")
+        raise
+    except Exception as exc:
+        logger.exception("Drift detection failed")
+        raise DriftDetectionError(f"Drift detection failed: {exc}") from exc
 
 
 if __name__ == "__main__":
