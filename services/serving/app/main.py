@@ -4,6 +4,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
+import numpy as np
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -30,6 +31,12 @@ LATENCY = Histogram(
 )
 
 API_KEYS = {key.strip() for key in settings.API_KEYS_RAW.split(",") if key.strip()}
+
+
+def to_python_value(value: Any) -> Any:
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 def require_api_key(x_api_key: str = Header(default="")):
@@ -92,7 +99,7 @@ def predict(req: PredictRequest, dep=Depends(require_api_key)):
         logger.info("Received prediction request request_id=%s model=%s", request_id, model_name)
 
         df = pd.DataFrame([req.features])
-        prediction = backend.predict_one(df)
+        prediction = to_python_value(backend.predict_one(df))
 
         REQUESTS.labels(model=model_name, status="success").inc()
 
