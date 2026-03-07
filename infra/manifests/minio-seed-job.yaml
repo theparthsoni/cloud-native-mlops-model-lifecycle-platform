@@ -21,13 +21,12 @@ spec:
               from botocore.exceptions import ClientError
               from sklearn.datasets import load_breast_cancer
 
-              MINIO_ENDPOINT = "http://minio.mlops-platform.svc.cluster.local:9000"
+              MINIO_ENDPOINT = "http://mlops-minio.mlops-platform.svc.cluster.local:9000"
               ACCESS_KEY = "minio"
-              SECRET_KEY = "minio123"
+              SECRET_KEY = "minio12345"
               BUCKET = "mlflow"
               OBJECT_KEY = "batch/input/batch_input.csv"
 
-              # Generate batch input from the same dataset schema used in training
               data = load_breast_cancer(as_frame=True)
               df = data.frame.drop(columns=["target"]).head(20)
               csv_data = df.to_csv(index=False).encode("utf-8")

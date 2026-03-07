@@ -1,19 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Copy platform secrets into model namespaces for demo convenience.
-# In production, use External Secrets/Vault and avoid copying secrets across namespaces.
+PLATFORM_NS="mlops-platform"
+TARGET_NAMESPACES=("mlops-dev" "mlops-staging" "mlops-prod")
+SECRETS=("mlops-postgresql" "mlops-minio")
 
-SRC_NS=mlops-platform
-TARGETS=(mlops-dev mlops-staging mlops-prod)
-SECRETS=(mlops-postgresql mlops-minio)
+copy_secret() {
+  local secret_name="$1"
+  local target_ns="$2"
 
-for ns in "${TARGETS[@]}"; do
-  kubectl get ns "$ns" >/dev/null
+  kubectl get secret "$secret_name" -n "$PLATFORM_NS" -o json | \
+    jq --arg ns "$target_ns" '
+      del(
+        .metadata.annotations,
+        .metadata.creationTimestamp,
+        .metadata.managedFields,
+        .metadata.ownerReferences,
+        .metadata.resourceVersion,
+        .metadata.selfLink,
+        .metadata.uid
+      )
+      | .metadata.namespace = $ns
+    ' | kubectl apply -f -
+
+  echo "[OK] copied ${secret_name} to ${target_ns}"
+}
+
+for ns in "${TARGET_NAMESPACES[@]}"; do
+  kubectl get namespace "$ns" >/dev/null 2>&1 || kubectl create namespace "$ns"
+
   for secret in "${SECRETS[@]}"; do
-    kubectl -n "$SRC_NS" get secret "$secret" -o yaml \
-      | sed "s/namespace: $SRC_NS/namespace: $ns/" \
-      | kubectl apply -n "$ns" -f -
-    echo "[OK] copied $secret to $ns"
+    copy_secret "$secret" "$ns"
   done
 done

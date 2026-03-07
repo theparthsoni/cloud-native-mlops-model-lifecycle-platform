@@ -4,6 +4,16 @@ auth:
 
 defaultBuckets: "mlflow,data"
 
+image:
+  repository: bitnami/minio
+  tag: 2025.7.23-debian-12-r0
+  pullPolicy: IfNotPresent
+
+clientImage:
+  repository: bitnami/minio-client
+  tag: 2025.7.21-debian-12-r2
+  pullPolicy: IfNotPresent
+
 persistence:
   enabled: true
   size: 10Gi
@@ -15,3 +25,6 @@ resources:
   limits:
     cpu: 1
     memory: 1Gi
+
+console:
+  enabled: true
