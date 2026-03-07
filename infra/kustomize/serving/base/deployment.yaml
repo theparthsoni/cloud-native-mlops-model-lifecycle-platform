@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-serving
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: model-serving
+  template:
+    metadata:
+      labels:
+        app: model-serving
+    spec:
+      serviceAccountName: model-serving
+      containers:
+      - name: model-serving
+        image: mlops-serving:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: http://mlflow.mlops-platform.svc.cluster.local:5000
+        - name: MODEL_NAME
+          value: demo_classifier
+        - name: MODEL_STAGE
+          value: Production
+        - name: API_KEYS
+          value: dev-key
+        - name: MLFLOW_S3_ENDPOINT_URL
+          value: http://mlops-minio.mlops-platform.svc.cluster.local:9000
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: mlops-minio
+              key: root-user
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: mlops-minio
+              key: root-password
+        - name: PREDLOG_HOST
+          value: mlops-postgresql.mlops-platform.svc.cluster.local
+        - name: PREDLOG_DB
+          value: mlops
+        - name: PREDLOG_USER
+          value: postgres
+        - name: PREDLOG_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mlops-postgresql
+              key: postgres-password
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 1
+            memory: 1Gi
