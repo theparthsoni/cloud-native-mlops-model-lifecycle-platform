@@ -1,33 +1,54 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: minio-seed
+  name: minio-seed-job
+  namespace: mlops-platform
 spec:
   backoffLimit: 2
   template:
     spec:
       restartPolicy: OnFailure
       containers:
-        - name: mc
-          image: bitnami/minio-client:2024.7.11
-          env:
-            - name: MINIO_ROOT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: mlops-minio
-                  key: root-user
-            - name: MINIO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: mlops-minio
-                  key: root-password
-          command: ["bash", "-lc"]
-          args:
+        - name: seed-batch-input
+          image: python:3.11-slim
+          command:
+            - /bin/sh
+            - -c
             - |
-              set -euo pipefail
-              mc alias set local http://mlops-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
-              echo "mean radius,mean texture,mean perimeter,mean area" > /tmp/batch_input.csv
-              echo "14.5,20.5,95.0,650.0" >> /tmp/batch_input.csv
-              echo "12.2,17.1,80.1,450.5" >> /tmp/batch_input.csv
-              mc cp /tmp/batch_input.csv local/data/batch_input.csv
-              echo "[OK] seeded s3://data/batch_input.csv"
+              pip install --no-cache-dir boto3 pandas scikit-learn && \
+              python - <<'PY'
+              import boto3
+              from botocore.exceptions import ClientError
+              from sklearn.datasets import load_breast_cancer
+
+              MINIO_ENDPOINT = "http://minio.mlops-platform.svc.cluster.local:9000"
+              ACCESS_KEY = "minio"
+              SECRET_KEY = "minio123"
+              BUCKET = "mlflow"
+              OBJECT_KEY = "batch/input/batch_input.csv"
+
+              # Generate batch input from the same dataset schema used in training
+              data = load_breast_cancer(as_frame=True)
+              df = data.frame.drop(columns=["target"]).head(20)
+              csv_data = df.to_csv(index=False).encode("utf-8")
+
+              s3 = boto3.client(
+                  "s3",
+                  endpoint_url=MINIO_ENDPOINT,
+                  aws_access_key_id=ACCESS_KEY,
+                  aws_secret_access_key=SECRET_KEY,
+              )
+
+              try:
+                  s3.head_bucket(Bucket=BUCKET)
+                  print(f"Bucket '{BUCKET}' already exists")
+              except ClientError:
+                  print(f"Creating bucket '{BUCKET}'")
+                  s3.create_bucket(Bucket=BUCKET)
+
+              s3.put_object(Bucket=BUCKET, Key=OBJECT_KEY, Body=csv_data)
+              print(f"Uploaded s3://{BUCKET}/{OBJECT_KEY} with {len(df)} rows")
+              print("Columns:")
+              for col in df.columns:
+                  print(f" - {col}")
+              PY

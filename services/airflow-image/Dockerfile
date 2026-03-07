@@ -10,7 +10,7 @@ USER airflow
 WORKDIR /opt/airflow
 
 COPY services /opt/airflow/services
-COPY airflow /opt/airflow/airflow
+COPY airflow/dags /opt/airflow/dags
 COPY services/airflow-image/requirements.txt /opt/airflow/requirements.txt
 
 RUN pip install --no-cache-dir -r /opt/airflow/requirements.txt

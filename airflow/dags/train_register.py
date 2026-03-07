@@ -25,7 +25,7 @@ with DAG(
             "MLFLOW_TRACKING_URI": "http://mlflow.mlops-platform.svc.cluster.local:5000",
             "MLFLOW_EXPERIMENT_NAME": "demo-classifier",
             "MODEL_NAME": "demo_classifier",
-            "PROMOTE_TO_STAGE": "Staging",
+            "PROMOTE_TO_STAGE": "Production",
             "F1_GATE": "0.92",
             # MinIO for artifacts
             "MLFLOW_S3_ENDPOINT_URL": "http://mlops-minio.mlops-platform.svc.cluster.local:9000",

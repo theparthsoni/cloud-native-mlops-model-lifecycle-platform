@@ -53,7 +53,7 @@ with DAG(
             "PREDLOG_DB": "mlops",
             "PREDLOG_USER": "postgres",
             "MLFLOW_S3_ENDPOINT_URL": "http://mlops-minio.mlops-platform.svc.cluster.local:9000",
-            "PUSHGATEWAY_URL": "http://pushgateway.mlops-platform.svc.cluster.local:9091",
+            "DRIFT_PUSHGATEWAY_URL": "http://pushgateway.mlops-platform.svc.cluster.local:9091",
         },
         get_logs=True,
         is_delete_operator_pod=True,
@@ -63,7 +63,7 @@ with DAG(
         task_id="trigger_retrain",
         trigger_dag_id="train_register",
         wait_for_completion=False,
-        trigger_rule="all_done",
+        trigger_rule="one_failed",
     )
 
     drift >> trigger_retrain

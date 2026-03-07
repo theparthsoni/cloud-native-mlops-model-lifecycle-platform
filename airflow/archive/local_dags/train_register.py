@@ -15,7 +15,7 @@ def run_training() -> None:
     os.environ["MLFLOW_EXPERIMENT_NAME"] = "demo-classifier"
     os.environ["MODEL_NAME"] = "demo_classifier"
 
-    os.environ["PROMOTE_TO_STAGE"] = "Staging"
+    os.environ["PROMOTE_TO_STAGE"] = "Production"
     os.environ["F1_GATE"] = "0.92"
 
     os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://localhost:9000"

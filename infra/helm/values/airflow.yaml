@@ -8,9 +8,9 @@ executor: KubernetesExecutor
 
 config:
   core:
-    load_examples: 'False'
+    load_examples: "False"
   webserver:
-    expose_config: 'True'
+    expose_config: "True"
 
 webserver:
   defaultUser:
@@ -19,14 +19,12 @@ webserver:
     username: admin
     password: admin
     email: admin@example.com
-
-scheduler:
   resources:
     requests:
       cpu: 200m
       memory: 512Mi
 
-webserver:
+scheduler:
   resources:
     requests:
       cpu: 200m

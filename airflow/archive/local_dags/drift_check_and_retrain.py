@@ -31,7 +31,7 @@ def run_drift_check() -> None:
     os.environ["AWS_ACCESS_KEY_ID"] = "minio"
     os.environ["AWS_SECRET_ACCESS_KEY"] = "minio12345"
 
-    os.environ["PUSHGATEWAY_URL"] = "http://localhost:9091"
+    os.environ["DRIFT_PUSHGATEWAY_URL"] = "http://localhost:9091"
 
     main()
 
@@ -53,7 +53,7 @@ with DAG(
         task_id="trigger_retrain",
         trigger_dag_id="train_register",
         wait_for_completion=False,
-        trigger_rule="all_done",
+        trigger_rule="one_failed",
     )
 
     drift >> trigger_retrain
