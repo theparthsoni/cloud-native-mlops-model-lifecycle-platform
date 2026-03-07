@@ -33,8 +33,6 @@ spec:
           env:
             - name: PGHOST
               value: mlops-postgresql
-            - name: PGPORT
-              value: "5432"
             - name: PGDATABASE
               value: mlops
             - name: PGUSER
@@ -66,7 +64,7 @@ spec:
             - --port
             - "5000"
             - --backend-store-uri
-            - postgresql://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/$(PGDATABASE)
+            - postgresql://$(PGUSER):$(PGPASSWORD)@$(PGHOST):5432/$(PGDATABASE)
             - --default-artifact-root
             - $(MLFLOW_DEFAULT_ARTIFACT_ROOT)
           readinessProbe:

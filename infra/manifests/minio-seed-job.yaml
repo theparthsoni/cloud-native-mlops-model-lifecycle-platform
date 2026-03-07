@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-seed
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: bitnami/minio-client:2024.7.11
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-minio
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-minio
+                  key: root-password
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              mc alias set local http://mlops-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              echo "mean radius,mean texture,mean perimeter,mean area" > /tmp/batch_input.csv
+              echo "14.5,20.5,95.0,650.0" >> /tmp/batch_input.csv
+              echo "12.2,17.1,80.1,450.5" >> /tmp/batch_input.csv
+              mc cp /tmp/batch_input.csv local/data/batch_input.csv
+              echo "[OK] seeded s3://data/batch_input.csv"

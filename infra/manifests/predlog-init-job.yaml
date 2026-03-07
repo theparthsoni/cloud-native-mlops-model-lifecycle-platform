@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: predlog-init
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: psql
+          image: bitnami/postgresql:16
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mlops-postgresql
+                  key: postgres-password
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              echo "Creating prediction_logs table if not exists..."
+              psql -h mlops-postgresql -U postgres -d mlops -c "
+              CREATE TABLE IF NOT EXISTS prediction_logs (
+                id BIGSERIAL PRIMARY KEY,
+                ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                request_id TEXT,
+                model_name TEXT NOT NULL,
+                model_version TEXT NOT NULL,
+                features JSONB NOT NULL,
+                prediction JSONB,
+                latency_ms DOUBLE PRECISION,
+                status TEXT
+              );
+              CREATE INDEX IF NOT EXISTS idx_prediction_logs_ts ON prediction_logs (ts);
+              "
+              echo "[OK] predlog table ready"

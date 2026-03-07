@@ -8,9 +8,6 @@ from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 from airflow.kubernetes.secret import Secret
 
-# Drift check reads recent production inputs from Postgres prediction_logs table and
-# compares to reference_stats.json stored as an MLflow artifact.
-
 postgres_pw = Secret(
     deploy_type="env",
     deploy_target="PREDLOG_PASSWORD",
@@ -62,7 +59,6 @@ with DAG(
         is_delete_operator_pod=True,
     )
 
-    # For demo: trigger retraining regardless of drift result (all_done).
     trigger_retrain = TriggerDagRunOperator(
         task_id="trigger_retrain",
         trigger_dag_id="train_register",
