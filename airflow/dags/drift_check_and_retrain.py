@@ -3,10 +3,32 @@ from __future__ import annotations
 from datetime import datetime
 
 from airflow import DAG
-from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
-from airflow.operators.trigger_dagrun import TriggerDagRunOperator
-
 from airflow.kubernetes.secret import Secret
+from airflow.models import Variable
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
+
+ENV = Variable.get("deployment_env", default_var="dev")
+
+ENV_CONFIG = {
+    "dev": {
+        "namespace": "mlops-dev",
+        "model_stage": "Staging",
+    },
+    "staging": {
+        "namespace": "mlops-staging",
+        "model_stage": "Staging",
+    },
+    "prod": {
+        "namespace": "mlops-prod",
+        "model_stage": "Production",
+    },
+}
+
+if ENV not in ENV_CONFIG:
+    raise ValueError(f"Unsupported deployment_env: {ENV}")
+
+cfg = ENV_CONFIG[ENV]
 
 postgres_pw = Secret(
     deploy_type="env",
@@ -34,19 +56,20 @@ with DAG(
     start_date=datetime(2025, 1, 1),
     schedule="0 * * * *",
     catchup=False,
-    tags=["mlops"],
+    tags=["mlops", ENV],
 ) as dag:
-
     drift = KubernetesPodOperator(
         name="drift-check",
         task_id="drift-check",
-        namespace="mlops-prod",
+        namespace=cfg["namespace"],
         image="mlops-drift:latest",
         image_pull_policy="IfNotPresent",
+        cmds=["python", "-m", "services.drift.drift"],
         secrets=[postgres_pw, minio_user, minio_pass],
         env_vars={
             "MLFLOW_TRACKING_URI": "http://mlflow.mlops-platform.svc.cluster.local:5000",
             "MODEL_NAME": "demo_classifier",
+            "MODEL_STAGE": cfg["model_stage"],
             "DRIFT_LOOKBACK_HOURS": "24",
             "DRIFT_PSI_THRESHOLD": "0.2",
             "PREDLOG_HOST": "mlops-postgresql.mlops-platform.svc.cluster.local",
@@ -56,7 +79,8 @@ with DAG(
             "DRIFT_PUSHGATEWAY_URL": "http://pushgateway.mlops-platform.svc.cluster.local:9091",
         },
         get_logs=True,
-        is_delete_operator_pod=True,
+        is_delete_operator_pod=False,
+        in_cluster=True,
     )
 
     trigger_retrain = TriggerDagRunOperator(

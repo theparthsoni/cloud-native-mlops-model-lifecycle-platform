@@ -2,6 +2,7 @@ SHELL := /bin/bash
 
 KIND_CLUSTER ?= mlops-local
 NAMESPACE_PLATFORM ?= mlops-platform
+ENV ?= dev
 
 # Images (local)
 IMG_MLFLOW  ?= mlops-mlflow:latest
@@ -13,7 +14,14 @@ IMG_AIRFLOW ?= mlops-airflow:latest
 
 .PHONY: help
 help:
-	@echo "Targets: kind-up, kind-down, minikube-up, build-images, kind-load, deploy-platform, deploy-dev, deploy-staging, deploy-prod, teardown"
+	@echo "Targets:"
+	@echo "  kind-up, kind-down, minikube-up"
+	@echo "  build-images, kind-load"
+	@echo "  deploy-platform"
+	@echo "  deploy-serving ENV=dev|staging|prod"
+	@echo "  deploy-dev, deploy-staging, deploy-prod"
+	@echo "  restart-airflow, rebuild-airflow"
+	@echo "  teardown"
 
 .PHONY: kind-up
 kind-up:
@@ -39,17 +47,30 @@ kind-load:
 deploy-platform:
 	./scripts/deploy_platform.sh
 
+.PHONY: deploy-serving
+deploy-serving:
+	kubectl apply -k infra/kustomize/serving/overlays/$(ENV)
+
 .PHONY: deploy-dev
 deploy-dev:
-	kubectl apply -k infra/kustomize/serving/overlays/dev
+	$(MAKE) deploy-serving ENV=dev
 
 .PHONY: deploy-staging
 deploy-staging:
-	kubectl apply -k infra/kustomize/serving/overlays/staging
+	$(MAKE) deploy-serving ENV=staging
 
 .PHONY: deploy-prod
 deploy-prod:
-	kubectl apply -k infra/kustomize/serving/overlays/prod
+	$(MAKE) deploy-serving ENV=prod
+
+.PHONY: restart-airflow
+restart-airflow:
+	kubectl rollout restart deployment/airflow-scheduler -n $(NAMESPACE_PLATFORM)
+	kubectl rollout restart deployment/airflow-webserver -n $(NAMESPACE_PLATFORM)
+	-kubectl rollout restart deployment/airflow-dag-processor -n $(NAMESPACE_PLATFORM)
+
+.PHONY: rebuild-airflow
+rebuild-airflow: build-images kind-load restart-airflow
 
 .PHONY: teardown
 teardown:
