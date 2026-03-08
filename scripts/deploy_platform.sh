@@ -22,7 +22,10 @@ helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheu
 kubectl apply -n mlops-platform -f "$ROOT_DIR/infra/manifests/pushgateway.yaml"
 kubectl apply -n mlops-platform -f "$ROOT_DIR/infra/manifests/mlflow.yaml"
 kubectl apply -n mlops-platform -f "$ROOT_DIR/infra/manifests/pushgateway-servicemonitor.yaml"
-kubectl apply -f "$ROOT_DIR/infra/manifests/airflow-rbac.yaml"
+
+kubectl apply -k "$ROOT_DIR/infra/kustomize/airflow-rbac/overlays/dev"
+kubectl apply -k "$ROOT_DIR/infra/kustomize/airflow-rbac/overlays/staging"
+kubectl apply -k "$ROOT_DIR/infra/kustomize/airflow-rbac/overlays/prod"
 
 helm upgrade --install airflow apache-airflow/airflow \
   -n mlops-platform \

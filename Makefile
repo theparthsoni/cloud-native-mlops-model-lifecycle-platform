@@ -69,6 +69,12 @@ restart-airflow:
 	kubectl rollout restart deployment/airflow-webserver -n $(NAMESPACE_PLATFORM)
 	-kubectl rollout restart deployment/airflow-dag-processor -n $(NAMESPACE_PLATFORM)
 
+.PHONY: deploy-airflow-rbac
+deploy-airflow-rbac:
+	kubectl apply -k infra/kustomize/airflow-rbac/overlays/dev
+	kubectl apply -k infra/kustomize/airflow-rbac/overlays/staging
+	kubectl apply -k infra/kustomize/airflow-rbac/overlays/prod
+
 .PHONY: rebuild-airflow
 rebuild-airflow: build-images kind-load restart-airflow
 
