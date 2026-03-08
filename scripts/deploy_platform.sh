@@ -41,7 +41,7 @@ kubectl -n mlops-platform rollout status deploy/airflow-webserver --timeout=600s
 
 echo "[OK] platform deployed"
 
-printf "\nAccess (port-forward examples):\n"
+printf "\nUI Access (port-forward):\n"
 echo "  MLflow:   kubectl -n mlops-platform port-forward svc/mlflow 5000:5000"
 echo "  Airflow:  kubectl -n mlops-platform port-forward svc/airflow-webserver 8080:8080"
 echo "  Grafana:  kubectl -n mlops-platform port-forward svc/kube-prometheus-stack-grafana 3000:80"

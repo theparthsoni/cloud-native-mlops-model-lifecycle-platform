@@ -30,7 +30,6 @@ fi
 
 kubectl cluster-info
 
-# Install ingress-nginx (optional but helpful)
 if ! kubectl get ns ingress-nginx >/dev/null 2>&1; then
   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
   echo "[OK] installed ingress-nginx"
